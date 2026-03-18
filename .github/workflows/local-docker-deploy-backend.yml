@@ -80,14 +80,18 @@ jobs:
               Write-Host "Container is already running. Reusing existing container."
             }
           } else {
-            Write-Host "Container not found. Creating and starting a new container..."
+            Write-Host "Container not found. Creating persistent container..."
             docker run -d `
-            --name $CONTAINER_NAME `
-            -p 8080:8080 `
-            -v "${DEPLOY_DIR_UNIX}:/app" `
-            -w /app `
-            $IMAGE_NAME `
-            java -jar gateway.jar
+              --name $CONTAINER_NAME `
+              -p 8080:8080 `
+              -v "${DEPLOY_DIR_UNIX}:/app" `
+              -w /app `
+              $IMAGE_NAME `
+              tail -f /dev/null
           }
+
+          Write-Host "Restarting Java process inside existing container..."
+          docker exec $CONTAINER_NAME sh -c "pkill -f 'java -jar gateway.jar' || true"
+          docker exec -d $CONTAINER_NAME sh -c "cd /app; nohup java -jar gateway.jar > app.log 2>&1 &"
 
           Write-Host "Deployment finished! URL: http://localhost:8080"
