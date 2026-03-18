@@ -54,10 +54,25 @@ jobs:
           Copy-Item -Path $jarFile.FullName -Destination (Join-Path $DEPLOY_DIR "gateway.jar") -Force
 
       - name: Manage Docker Container
+        env:
+          NACOS_SERVER_ADDR: ${{ secrets.NACOS_SERVER_ADDR }}
+          NACOS_NAMESPACE: ${{ secrets.NACOS_NAMESPACE }}
+          NACOS_USERNAME: ${{ secrets.NACOS_USERNAME }}
+          NACOS_PASSWORD: ${{ secrets.NACOS_PASSWORD }}
+          NACOS_GROUP: ${{ secrets.NACOS_GROUP }}
+          SPRING_PROFILE: ${{ secrets.SPRING_PROFILE }}
         run: |
           $CONTAINER_NAME = "gateway-app-container"
           $IMAGE_NAME = "eclipse-temurin:17-jre"
           $DEPLOY_DIR_UNIX = "D:/deploy/backend/gateway"
+
+          if ([string]::IsNullOrWhiteSpace($env:NACOS_SERVER_ADDR)) {
+            Write-Error "Missing required secret: NACOS_SERVER_ADDR"
+            exit 1
+          }
+
+          $NACOS_GROUP = if ([string]::IsNullOrWhiteSpace($env:NACOS_GROUP)) { "DEFAULT_GROUP" } else { $env:NACOS_GROUP }
+          $SPRING_PROFILE = if ([string]::IsNullOrWhiteSpace($env:SPRING_PROFILE)) { "prod" } else { $env:SPRING_PROFILE }
 
           Write-Host "Checking local image..."
           $imageExists = docker images -q $IMAGE_NAME
@@ -92,6 +107,19 @@ jobs:
 
           Write-Host "Restarting Java process inside existing container..."
           docker exec $CONTAINER_NAME sh -c "pkill -f 'java -jar gateway.jar' || true"
-          docker exec -d $CONTAINER_NAME sh -c "cd /app; nohup java -jar gateway.jar > app.log 2>&1 &"
+          docker exec -d `
+            -e SPRING_APPLICATION_NAME=gateway `
+            -e SPRING_PROFILES_ACTIVE=$SPRING_PROFILE `
+            -e SPRING_CONFIG_IMPORT=nacos: `
+            -e SPRING_CLOUD_NACOS_CONFIG_SERVER_ADDR=$env:NACOS_SERVER_ADDR `
+            -e SPRING_CLOUD_NACOS_DISCOVERY_SERVER_ADDR=$env:NACOS_SERVER_ADDR `
+            -e SPRING_CLOUD_NACOS_CONFIG_NAMESPACE=$env:NACOS_NAMESPACE `
+            -e SPRING_CLOUD_NACOS_DISCOVERY_NAMESPACE=$env:NACOS_NAMESPACE `
+            -e SPRING_CLOUD_NACOS_CONFIG_GROUP=$NACOS_GROUP `
+            -e SPRING_CLOUD_NACOS_CONFIG_FILE_EXTENSION=yaml `
+            -e SPRING_CLOUD_NACOS_USERNAME=$env:NACOS_USERNAME `
+            -e SPRING_CLOUD_NACOS_PASSWORD=$env:NACOS_PASSWORD `
+            $CONTAINER_NAME `
+            sh -c "cd /app; nohup java -jar gateway.jar > app.log 2>&1 &"
 
           Write-Host "Deployment finished! URL: http://localhost:8080"
