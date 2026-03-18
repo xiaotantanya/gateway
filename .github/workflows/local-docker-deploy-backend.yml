@@ -1,0 +1,93 @@
+name: Local Docker Deploy Backend (Stable Version)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "master" ]
+
+jobs:
+  local-deploy-backend:
+    name: Local Docker backend deployment workflow
+    runs-on: [self-hosted, windows]
+
+    defaults:
+      run:
+        shell: powershell
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify Environment
+        run: |
+          java -version
+          .\mvnw -v
+          docker --version
+
+      - name: Build backend project
+        run: |
+          Write-Host "Starting backend build..."
+          .\mvnw clean package -DskipTests
+
+      - name: Deploy JAR to D:\deploy\backend\gateway
+        run: |
+          $DEPLOY_DIR = "D:\deploy\backend\gateway"
+          Write-Host "Setting up target directory: $DEPLOY_DIR"
+
+          if (!(Test-Path $DEPLOY_DIR)) {
+              New-Item -ItemType Directory -Force -Path $DEPLOY_DIR | Out-Null
+          }
+
+          Write-Host "Cleaning old backend artifacts..."
+          Get-ChildItem -Path $DEPLOY_DIR -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
+          $jarFile = Get-ChildItem -Path "target" -Filter "*.jar" |
+              Where-Object { $_.Name -notlike "*.original" } |
+              Select-Object -First 1
+
+          if ($null -eq $jarFile) {
+              Write-Error "Error: Built JAR not found in target directory!"
+              exit 1
+          }
+
+          Write-Host "Copying $($jarFile.Name) to deployment directory as gateway.jar..."
+          Copy-Item -Path $jarFile.FullName -Destination (Join-Path $DEPLOY_DIR "gateway.jar") -Force
+
+      - name: Manage Docker Container
+        run: |
+          $CONTAINER_NAME = "gateway-app-container"
+          $IMAGE_NAME = "eclipse-temurin:17-jre"
+          $DEPLOY_DIR_UNIX = "D:/deploy/backend/gateway"
+
+          Write-Host "Checking local image..."
+          $imageExists = docker images -q $IMAGE_NAME
+          if (!$imageExists) {
+            Write-Host "Image not found locally. Pulling image..."
+            docker pull $IMAGE_NAME
+          } else {
+            Write-Host "Image already exists locally. Skip pull."
+          }
+
+          Write-Host "Checking existing container..."
+          $containerExists = docker ps -a -q -f "name=^/$CONTAINER_NAME$"
+
+          if ($containerExists) {
+            $containerRunning = docker ps -q -f "name=^/$CONTAINER_NAME$"
+            if (!$containerRunning) {
+              Write-Host "Container exists but is stopped. Starting existing container..."
+              docker start $CONTAINER_NAME
+            } else {
+              Write-Host "Container is already running. Reusing existing container."
+            }
+          } else {
+            Write-Host "Container not found. Creating and starting a new container..."
+            docker run -d `
+            --name $CONTAINER_NAME `
+            -p 8080:8080 `
+            -v "${DEPLOY_DIR_UNIX}:/app" `
+            -w /app `
+            $IMAGE_NAME `
+            java -jar gateway.jar
+          }
+
+          Write-Host "Deployment finished! URL: http://localhost:8080"
