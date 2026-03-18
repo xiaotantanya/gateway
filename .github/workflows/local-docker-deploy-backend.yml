@@ -21,13 +21,31 @@ jobs:
       - name: Verify Environment
         run: |
           java -version
-          .\mvnw -v
+          $MAVEN_CMD = if (Test-Path ".\mvnw.cmd") {
+            ".\mvnw.cmd"
+          } elseif (Get-Command mvn -ErrorAction SilentlyContinue) {
+            "mvn"
+          } else {
+            Write-Error "Neither mvnw.cmd nor mvn is available on this runner."
+            exit 1
+          }
+
+          & $MAVEN_CMD -v
           docker --version
 
       - name: Build backend project
         run: |
           Write-Host "Starting backend build..."
-          .\mvnw clean package -DskipTests
+          $MAVEN_CMD = if (Test-Path ".\mvnw.cmd") {
+            ".\mvnw.cmd"
+          } elseif (Get-Command mvn -ErrorAction SilentlyContinue) {
+            "mvn"
+          } else {
+            Write-Error "Neither mvnw.cmd nor mvn is available on this runner."
+            exit 1
+          }
+
+          & $MAVEN_CMD clean package -DskipTests
 
       - name: Deploy JAR to D:\deploy\backend\gateway
         run: |
